@@ -17,6 +17,7 @@ clock = pygame.time.Clock()
 FPS = 60
 HOST = "0.0.0.0"
 PORT = 5555
+PARTICLE_SCALE = 0.72
 
 is_host = False
 conn = None
@@ -33,6 +34,8 @@ enemy_network_data = {
 }
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+IMAGE_CACHE = {}
+FONT_CACHE = {}
 
 try:
     pygame.mixer.init()
@@ -41,15 +44,26 @@ except Exception:
     MIXER_READY = False
 
 def load_image(filename, size=None, alpha=True):
+    cache_key = (filename, size, alpha)
+    if cache_key in IMAGE_CACHE:
+        return IMAGE_CACHE[cache_key]
+
     path = os.path.join(BASE_DIR, filename)
     try:
         img = pygame.image.load(path)
         img = img.convert_alpha() if alpha else img.convert()
         if size:
             img = pygame.transform.smoothscale(img, size)
+        IMAGE_CACHE[cache_key] = img
         return img
     except Exception:
         return None
+
+def get_font(size, bold=True):
+    cache_key = (size, bold)
+    if cache_key not in FONT_CACHE:
+        FONT_CACHE[cache_key] = pygame.font.SysFont("Verdana", size, bold=bold)
+    return FONT_CACHE[cache_key]
 
 bg_image = load_image("pantai_padang_dark.png", (s_width, s_height), alpha=False)
 if bg_image is None:
@@ -60,6 +74,7 @@ dark_overlay = pygame.Surface((s_width, s_height), pygame.SRCALPHA)
 dark_overlay.fill((0, 0, 0, 38))
 fog_overlay = pygame.Surface((s_width, s_height), pygame.SRCALPHA)
 fog_overlay.fill((30, 35, 55, 14))
+screen_overlay = pygame.Surface((s_width, s_height), pygame.SRCALPHA)
 
 SHIP_OPTIONS = [
     {"name": "SKY PHOENIX", "image": "player_1.png", "health": 80, "shoot_delay": 100, "damage": 9, "bullet_count": 2, "speed": 0.25, "color": (0, 255, 255), "desc": "Seimbang"},
@@ -119,6 +134,7 @@ sound = SoundManager()
 
 class Explosion:
     def __init__(self, x, y, color, amount=28, power=4, shockwave=True):
+        amount = max(6, int(amount * PARTICLE_SCALE))
         self.particles = []
         self.sparks = []
         self.smoke = []
@@ -165,9 +181,11 @@ class Explosion:
             radius = int((1 - life) * 95)
             alpha = int(120 * life)
             if radius > 2 and alpha > 0:
-                layer = pygame.Surface((s_width, s_height), pygame.SRCALPHA)
-                pygame.draw.circle(layer, (255, 210, 120, alpha), (int(self.x), int(self.y)), radius, 3)
-                surface.blit(layer, (0, 0))
+                size = radius * 2 + 8
+                layer = pygame.Surface((size, size), pygame.SRCALPHA)
+                center = size // 2
+                pygame.draw.circle(layer, (255, 210, 120, alpha), (center, center), radius, 3)
+                surface.blit(layer, (int(self.x) - center, int(self.y) - center))
         for sm in self.smoke:
             alpha = int(38 * life)
             if alpha > 0:
@@ -386,43 +404,47 @@ class BossLaser:
         return self.active and self.damage_tick % 6 == 0
 
     def draw_warning(self, surface):
+        ticks = pygame.time.get_ticks()
         progress = 1 - ((self.timer - (self.active_time + self.fade_time)) / self.warning_time)
-        pulse = 0.5 + 0.5 * math.sin(pygame.time.get_ticks() * 0.025)
+        pulse = 0.5 + 0.5 * math.sin(ticks * 0.025)
         alpha = int(90 + 115 * pulse)
-        warn_surface = pygame.Surface((s_width, s_height), pygame.SRCALPHA)
         line_h = s_height - self.start_y
+        warn_w = 190
+        cx = warn_w // 2
+        warn_surface = pygame.Surface((warn_w, line_h), pygame.SRCALPHA)
 
         # Garis peringatan dimulai tepat di bawah boss sehingga terasa menyatu dengan meriam.
-        pygame.draw.rect(warn_surface, (255, 30, 70, alpha), [self.x - 7, self.start_y, 14, line_h], border_radius=6)
-        pygame.draw.line(warn_surface, (255, 240, 240, alpha), (self.x, self.start_y), (self.x, s_height), 2)
+        pygame.draw.rect(warn_surface, (255, 30, 70, alpha), [cx - 7, 0, 14, line_h], border_radius=6)
+        pygame.draw.line(warn_surface, (255, 240, 240, alpha), (cx, 0), (cx, line_h), 2)
 
         # Cahaya Laser Terhubung dengan meriam Boss
         ring_radius = int(24 + progress * 28 + pulse * 4)
-        pygame.draw.circle(warn_surface, (255, 55, 140, 125), (self.x, self.start_y + 2), ring_radius, 4)
-        pygame.draw.circle(warn_surface, (255, 255, 255, 165), (self.x, self.start_y + 2), max(10, ring_radius // 3), 2)
-        pygame.draw.circle(warn_surface, (180, 50, 255, 120), (self.x, self.start_y + 2), 14 + int(progress * 5))
+        pygame.draw.circle(warn_surface, (255, 55, 140, 125), (cx, 2), ring_radius, 4)
+        pygame.draw.circle(warn_surface, (255, 255, 255, 165), (cx, 2), max(10, ring_radius // 3), 2)
+        pygame.draw.circle(warn_surface, (180, 50, 255, 120), (cx, 2), 14 + int(progress * 5))
 
-        ground_y = s_height - 24
+        ground_y = line_h - 24
         outer = int(18 + progress * 18)
         inner = max(8, outer // 2)
-        pygame.draw.circle(warn_surface, (255, 70, 90, alpha), (self.x, ground_y), outer, 3)
-        pygame.draw.circle(warn_surface, (255, 220, 220, alpha), (self.x, ground_y), inner, 2)
-        pygame.draw.line(warn_surface, (255, 70, 90, alpha), (self.x - outer - 10, ground_y), (self.x + outer + 10, ground_y), 1)
-        pygame.draw.line(warn_surface, (255, 70, 90, alpha), (self.x, ground_y - outer - 10), (self.x, ground_y + outer + 10), 1)
+        pygame.draw.circle(warn_surface, (255, 70, 90, alpha), (cx, ground_y), outer, 3)
+        pygame.draw.circle(warn_surface, (255, 220, 220, alpha), (cx, ground_y), inner, 2)
+        pygame.draw.line(warn_surface, (255, 70, 90, alpha), (cx - outer - 10, ground_y), (cx + outer + 10, ground_y), 1)
+        pygame.draw.line(warn_surface, (255, 70, 90, alpha), (cx, ground_y - outer - 10), (cx, ground_y + outer + 10), 1)
 
         for i in range(6):
-            angle = pygame.time.get_ticks() * 0.01 + i * (math.pi / 3)
-            px = int(self.x + math.cos(angle) * (outer + 12))
+            angle = ticks * 0.01 + i * (math.pi / 3)
+            px = int(cx + math.cos(angle) * (outer + 12))
             py = int(ground_y + math.sin(angle) * (outer + 12))
             pygame.draw.circle(warn_surface, (255, 180, 120, 150), (px, py), 3)
 
-        surface.blit(warn_surface, (0, 0))
+        surface.blit(warn_surface, (int(self.x) - cx, self.start_y))
 
     def draw_active_beam(self, surface):
+        ticks = pygame.time.get_ticks()
         scale = self.current_alpha_scale()
         beam_h = s_height - self.start_y
         glow_w = self.width
-        core_w = self.core_width + int(3 * math.sin(pygame.time.get_ticks() * 0.05))
+        core_w = self.core_width + int(3 * math.sin(ticks * 0.05))
         beam_surface = pygame.Surface((glow_w + 100, beam_h + 120), pygame.SRCALPHA)
         cx = beam_surface.get_width() // 2
 
@@ -432,10 +454,10 @@ class BossLaser:
         pygame.draw.rect(beam_surface, (255, 245, 255, int(255 * scale)), [cx - core_w // 2, 0, core_w, beam_h], border_radius=10)
 
         ring_spacing = 64
-        t = pygame.time.get_ticks() * 0.22
+        t = ticks * 0.22
         for i in range(10):
             ring_y = int((i * ring_spacing + t) % max(1, beam_h))
-            width = 46 + int(8 * math.sin(i + pygame.time.get_ticks() * 0.03))
+            width = 46 + int(8 * math.sin(i + ticks * 0.03))
             pygame.draw.ellipse(beam_surface, (255, 170, 255, int(135 * scale)), [cx - width // 2, ring_y + 2, width, 10], 2)
 
         # Kilatan api dari moncong senjata dengan bagian bawah boss, sehingga terasa seperti berasal dari kapal.
@@ -449,7 +471,7 @@ class BossLaser:
             base_x = cx + side * 20
             for step in range(6):
                 yy = 4 + step * 12
-                xx = base_x + side * int(8 * math.sin(step + pygame.time.get_ticks() * 0.03))
+                xx = base_x + side * int(8 * math.sin(step + ticks * 0.03))
                 points.append((xx, yy))
             if len(points) > 1:
                 pygame.draw.lines(beam_surface, (255, 140, 255, int(155 * scale)), False, points, 2)
@@ -458,7 +480,7 @@ class BossLaser:
         for radius, a in [(64, 75), (42, 135), (24, 230)]:
             pygame.draw.circle(beam_surface, (255, 110, 90, int(a * scale)), (cx, impact_y), radius)
         for i in range(12):
-            ang = (i / 12.0) * math.tau + pygame.time.get_ticks() * 0.01
+            ang = (i / 12.0) * math.tau + ticks * 0.01
             px = int(cx + math.cos(ang) * 54)
             py = int(impact_y + math.sin(ang) * 10)
             pygame.draw.line(beam_surface, (255, 180, 100, int(185 * scale)), (cx, impact_y), (px, py + 18), 3)
@@ -471,10 +493,11 @@ class BossLaser:
         else:
             self.draw_active_beam(surface)
 
-    def host_server():
-            global conn
+def host_server():
+    global conn
 
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server.bind((HOST, PORT))
     server.listen(1)
 
@@ -500,8 +523,10 @@ class BossLaser:
             send_data = pickle.dumps(network_data)
             conn.send(send_data)
 
-        except:
+        except Exception:
             break
+
+    server.close()
 
 
 def connect_to_server(ip):
@@ -588,7 +613,7 @@ class Game:
     def draw_text(self, text, size, x, y, color=(255, 255, 255), pulse=False, center=True):
         if pulse:
             size = int(size * (1 + 0.05 * math.sin(pygame.time.get_ticks() * 0.005)))
-        font = pygame.font.SysFont("Verdana", size, bold=True)
+        font = get_font(size, True)
         img = font.render(text, True, color)
         rect = img.get_rect(center=(x, y)) if center else img.get_rect(topleft=(x, y))
         screen.blit(img, rect)
@@ -682,9 +707,8 @@ class Game:
 
     def draw_game_over_screen(self):
         self.game_over_alpha = min(190, self.game_over_alpha + 5)
-        overlay = pygame.Surface((s_width, s_height), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, self.game_over_alpha))
-        screen.blit(overlay, (0, 0))
+        screen_overlay.fill((0, 0, 0, self.game_over_alpha))
+        screen.blit(screen_overlay, (0, 0))
         if self.game_over_alpha >= 150:
             panel = pygame.Rect(0, 0, 590, 325)
             panel.center = (s_width // 2, s_height // 2)
@@ -701,9 +725,8 @@ class Game:
             self.draw_button(self.end_exit_button, "QUIT", (255, 85, 95), (25, 12, 18))
 
     def draw_win_screen(self):
-        overlay = pygame.Surface((s_width, s_height), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 150))
-        screen.blit(overlay, (0, 0))
+        screen_overlay.fill((0, 0, 0, 150))
+        screen.blit(screen_overlay, (0, 0))
         panel = pygame.Rect(0, 0, 650, 340)
         panel.center = (s_width // 2, s_height // 2)
         pygame.draw.rect(screen, (12, 24, 30), panel, border_radius=24)
@@ -886,45 +909,34 @@ class Game:
                         sound.toggle_music()
 
                     if self.state == "MENU":
-
                         if event.key == K_h:
                             global is_host
-                        is_host = True
-
-                        threading.Thread(
-                            target=host_server,
-                            daemon=True
-                        ).start()
-                        self.setup()
-                        self.state = "PLAYING"
-                elif event.key == K_j:
-                        ip = input("Masukkan IP Host: ")
-
-                        threading.Thread(
-                            target=connect_to_server,
-                            args=(ip,),
-                            daemon=True
-                        ).start()
-                        self.setup()
-                        self.state = "PLAYING"
-
-                elif event.key in (K_1, K_2, K_3):
-                        self.selected_ship_index = event.key - K_1
-
-                elif event.key in (K_RETURN, K_SPACE):
-                        self.setup()
-                        self.state = "PLAYING"
-
-                if event.key in (K_1, K_2, K_3):
+                            is_host = True
+                            threading.Thread(
+                                target=host_server,
+                                daemon=True
+                            ).start()
+                            self.setup()
+                            self.state = "PLAYING"
+                        elif event.key == K_j:
+                            ip = input("Masukkan IP Host: ")
+                            threading.Thread(
+                                target=connect_to_server,
+                                args=(ip,),
+                                daemon=True
+                            ).start()
+                            self.setup()
+                            self.state = "PLAYING"
+                        elif event.key in (K_1, K_2, K_3):
                             self.selected_ship_index = event.key - K_1
-                elif event.key in (K_RETURN, K_SPACE):
+                        elif event.key in (K_RETURN, K_SPACE):
                             self.setup()
                             self.state = "PLAYING"
-                elif self.game_over or self.state == "WIN":
-                    if event.key == K_r:
+                    elif self.game_over or self.state == "WIN":
+                        if event.key == K_r:
                             self.setup()
                             self.state = "PLAYING"
-                elif event.key == K_m:
+                        elif event.key == K_m:
                             self.setup()
                             self.state = "MENU"
 
@@ -955,9 +967,8 @@ class Game:
                     if exp.timer <= 0:
                         self.explosions.remove(exp)
                 if self.flash_alpha > 0:
-                    flash = pygame.Surface((s_width, s_height), pygame.SRCALPHA)
-                    flash.fill((255, 210, 255, self.flash_alpha))
-                    screen.blit(flash, (0, 0))
+                    screen_overlay.fill((255, 210, 255, self.flash_alpha))
+                    screen.blit(screen_overlay, (0, 0))
 
                 status = f"WAVE {self.wave}" if self.wave < 4 else "FINAL BOSS"
                 self.draw_text(status, 25, 160, 42, (255, 235, 0))
