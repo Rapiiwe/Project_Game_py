@@ -20,17 +20,30 @@ PORT = 5555
 PARTICLE_SCALE = 0.72
 
 is_host = False
+online_mode = False
+online_connected = False
+network_status = ""
+next_bullet_id = 1
+next_enemy_id = 1
 conn = None
 client_socket = None
 network_data = {
     "x": 0,
     "y": 0,
-    "health": 100
+    "health": 100,
+    "max_health": 100,
+    "ship_index": 0,
+    "bullets": [],
+    "game_state": {}
 }
 enemy_network_data = {
     "x": 0,
     "y": 0,
-    "health": 100
+    "health": 100,
+    "max_health": 100,
+    "ship_index": 0,
+    "bullets": [],
+    "game_state": {}
 }
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -249,28 +262,76 @@ class Player(pygame.sprite.Sprite):
 class OnlinePlayer(pygame.sprite.Sprite):
     def __init__(self):
         super().__init__()
+        self.ship_index = None
+        self.max_health = 100
+        self.health = 100
+        self.set_ship(1)
+        self.rect = self.image.get_rect()
 
-        self.image = load_image("player_2.png", None, True)
+    def set_ship(self, ship_index):
+        ship_index = max(0, min(len(SHIP_OPTIONS) - 1, ship_index))
+        if ship_index == self.ship_index:
+            return
+
+        self.ship_index = ship_index
+        ship = SHIP_OPTIONS[ship_index]
+        self.max_health = ship["health"]
+        self.image = load_image(ship["image"], None, True)
 
         if self.image is None:
             self.image = pygame.Surface((80, 80), pygame.SRCALPHA)
             pygame.draw.polygon(
                 self.image,
-                (255, 100, 100),
+                ship["color"],
                 [(40, 0), (0, 80), (40, 60), (80, 80)]
             )
 
+    def update_network(self, data):
+        self.set_ship(data.get("ship_index", self.ship_index or 0))
+        center = self.rect.center
+        self.rect = self.image.get_rect(center=center)
+        self.rect.centerx = data.get("x", self.rect.centerx)
+        self.rect.centery = data.get("y", self.rect.centery)
+        self.max_health = data.get("max_health", self.max_health)
+        self.health = data.get("health", self.health)
+
+    def draw_hp_bar(self, surface):
+        bar_width = 105
+        fill = (max(0, self.health) / max(1, self.max_health)) * bar_width
+        x = self.rect.centerx - bar_width // 2
+        y = self.rect.bottom + 12
+        pygame.draw.rect(surface, (35, 16, 28), [x, y, bar_width, 8], border_radius=4)
+        pygame.draw.rect(surface, (255, 90, 120), [x, y, fill, 8], border_radius=4)
+        pygame.draw.rect(surface, (255, 255, 255), [x, y, bar_width, 8], 1, border_radius=4)
+
+class NetworkBullet(pygame.sprite.Sprite):
+    def __init__(self, data):
+        super().__init__()
+        self.image = pygame.Surface([18, 30], pygame.SRCALPHA)
         self.rect = self.image.get_rect()
-        self.health = 100
+        self.damage = 10
+        self.remote_id = None
+        self.update_network(data)
 
     def update_network(self, data):
-        self.rect.centerx = data["x"]
-        self.rect.centery = data["y"]
-        self.health = data["health"]
+        self.remote_id = data.get("id", self.remote_id)
+        color = tuple(data.get("color", (255, 90, 120)))
+        damage = data.get("damage", self.damage)
+        if damage != self.damage:
+            self.damage = damage
+        self.image.fill((0, 0, 0, 0))
+        pygame.draw.rect(self.image, (*color[:3], 65), [4, 4, 9, 22], border_radius=4)
+        pygame.draw.rect(self.image, color, [5, 2, 7, 20], border_radius=3)
+        self.rect.centerx = data.get("x", self.rect.centerx)
+        self.rect.centery = data.get("y", self.rect.centery)
 
 class Enemy(pygame.sprite.Sprite):
     def __init__(self, is_boss=False, orbit_target=None, orbit_angle=0):
         super().__init__()
+        global next_enemy_id
+
+        self.net_id = next_enemy_id
+        next_enemy_id += 1
         self.is_boss = is_boss
         self.orbit_target = orbit_target
         self.orbit_angle = orbit_angle
@@ -338,6 +399,10 @@ class Enemy(pygame.sprite.Sprite):
 class Bullet(pygame.sprite.Sprite):
     def __init__(self, x, y, color=(0, 255, 255), speed=-15, damage=10, width=6, height=18, dx=0):
         super().__init__()
+        global next_bullet_id
+
+        self.net_id = next_bullet_id
+        next_bullet_id += 1
         self.image = pygame.Surface([width + 10, height + 10], pygame.SRCALPHA)
         pygame.draw.rect(self.image, (*color[:3], 65), [4, 4, width + 2, height + 2], border_radius=max(2, width // 2))
         pygame.draw.rect(self.image, color, [5, 2, max(2, width), height], border_radius=max(2, width // 2))
@@ -494,16 +559,35 @@ class BossLaser:
             self.draw_active_beam(surface)
 
 def host_server():
-    global conn
+    global conn, online_mode, online_connected, network_status
 
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server.bind((HOST, PORT))
-    server.listen(1)
+    try:
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind((HOST, PORT))
+        server.listen(1)
+        server.settimeout(0.25)
 
-    print("Menunggu player masuk...")
+        network_status = "Menunggu player 2 join..."
+        print("Menunggu player masuk...")
 
-    conn, addr = server.accept()
+        while online_mode:
+            try:
+                conn, addr = server.accept()
+                break
+            except socket.timeout:
+                continue
+        else:
+            network_status = ""
+            server.close()
+            return
+
+        online_connected = True
+        network_status = f"Player 2 connected: {addr[0]}"
+    except Exception:
+        online_connected = False
+        network_status = "Gagal membuat host server"
+        return
 
     print("Player connected:", addr)
 
@@ -516,9 +600,15 @@ def host_server():
 
             received = pickle.loads(data)
 
-            enemy_network_data["x"] = received["x"]
-            enemy_network_data["y"] = received["y"]
-            enemy_network_data["health"] = received["health"]
+            enemy_network_data.update({
+                "x": received.get("x", enemy_network_data["x"]),
+                "y": received.get("y", enemy_network_data["y"]),
+                "health": received.get("health", enemy_network_data["health"]),
+                "max_health": received.get("max_health", enemy_network_data["max_health"]),
+                "ship_index": received.get("ship_index", enemy_network_data["ship_index"]),
+                "bullets": received.get("bullets", []),
+                "game_state": received.get("game_state", enemy_network_data["game_state"])
+            })
 
             send_data = pickle.dumps(network_data)
             conn.send(send_data)
@@ -526,14 +616,26 @@ def host_server():
         except Exception:
             break
 
+    online_connected = False
+    network_status = "Koneksi player 2 terputus"
     server.close()
 
 
 def connect_to_server(ip):
-    global client_socket
+    global client_socket, online_connected, network_status
 
     client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    client_socket.connect((ip, PORT))
+    client_socket.settimeout(6)
+    network_status = "Menghubungkan ke host..."
+    try:
+        client_socket.connect((ip, PORT))
+    except Exception:
+        network_status = "Gagal terhubung ke host"
+        return
+
+    client_socket.settimeout(None)
+    online_connected = True
+    network_status = "Terhubung ke host"
 
     while True:
         try:
@@ -547,29 +649,44 @@ def connect_to_server(ip):
 
             received = pickle.loads(data)
 
-            enemy_network_data["x"] = received["x"]
-            enemy_network_data["y"] = received["y"]
-            enemy_network_data["health"] = received["health"]
+            enemy_network_data.update({
+                "x": received.get("x", enemy_network_data["x"]),
+                "y": received.get("y", enemy_network_data["y"]),
+                "health": received.get("health", enemy_network_data["health"]),
+                "max_health": received.get("max_health", enemy_network_data["max_health"]),
+                "ship_index": received.get("ship_index", enemy_network_data["ship_index"]),
+                "bullets": received.get("bullets", []),
+                "game_state": received.get("game_state", enemy_network_data["game_state"])
+            })
 
-        except:
+        except Exception:
             break
+
+    online_connected = False
+    network_status = "Koneksi host terputus"
 
 class Game:
     def __init__(self):
         self.selected_ship_index = 0
         self.ship_cards = []
-        self.setup()
+        self.join_ip_text = ""
         self.state = "MENU"
+        self.setup()
         self.run()
 
     def setup(self):
+        global next_enemy_id
+
+        next_enemy_id = 1
         self.all_sprites = pygame.sprite.Group()
         self.enemies = pygame.sprite.Group()
         self.bullets = pygame.sprite.Group()
+        self.remote_bullets = pygame.sprite.Group()
         self.enemy_bullets = pygame.sprite.Group()
         self.bg_sprites = pygame.sprite.Group()
         self.explosions = []
         self.boss_lasers = []
+        self.remote_bullet_hits = set()
         self.score = 0
         self.game_over = False
         self.wave = 1
@@ -586,10 +703,13 @@ class Game:
         for _ in range(60):
             self.bg_sprites.add(BackgroundParticle())
         self.player = Player(SHIP_OPTIONS[self.selected_ship_index])
-        self.online_player = OnlinePlayer()
-        self.all_sprites.add(self.online_player)
+        self.online_player = None
+        if online_mode:
+            self.online_player = OnlinePlayer()
+            self.all_sprites.add(self.online_player)
         self.all_sprites.add(self.player)
         self.spawn_wave_enemies()
+        self.update_network_snapshot()
 
     def spawn_wave_enemies(self):
         if self.wave <= 3:
@@ -675,6 +795,36 @@ class Game:
         self.draw_button(self.exit_button, "KELUAR", (255, 85, 95), (25, 12, 18))
         self.draw_text("Klik pesawat untuk pilih | H = Host | J = Join | S = Sound | M = Music | ESC/Q = Keluar", 18, s_width // 2, 748, (210, 230, 255))
 
+    def draw_waiting_screen(self):
+        pulse = 0.5 + 0.5 * math.sin(pygame.time.get_ticks() * 0.006)
+        panel = pygame.Rect(0, 0, 620, 270)
+        panel.center = (s_width // 2, s_height // 2)
+        pygame.draw.rect(screen, (12, 18, 32), panel, border_radius=22)
+        pygame.draw.rect(screen, (0, 255, 210), panel, 3, border_radius=22)
+
+        self.draw_text("WAITING PLAYER", 46, s_width // 2, panel.y + 70, (0, 255, 210), True)
+        self.draw_text(network_status or "Menunggu player 2 join...", 24, s_width // 2, panel.y + 132, (255, 235, 0))
+        self.draw_text("Game akan mulai otomatis setelah koneksi tersambung", 19, s_width // 2, panel.y + 180, (220, 240, 255))
+
+        dots = "." * (1 + int(pulse * 3))
+        self.draw_text(f"READY CHECK{dots}", 20, s_width // 2, panel.y + 224, (255, 255, 255))
+
+    def draw_join_input_screen(self):
+        panel = pygame.Rect(0, 0, 650, 300)
+        panel.center = (s_width // 2, s_height // 2)
+        pygame.draw.rect(screen, (12, 18, 32), panel, border_radius=22)
+        pygame.draw.rect(screen, (255, 235, 0), panel, 3, border_radius=22)
+
+        input_rect = pygame.Rect(panel.x + 75, panel.y + 130, panel.width - 150, 56)
+        pygame.draw.rect(screen, (8, 12, 22), input_rect, border_radius=12)
+        pygame.draw.rect(screen, (0, 255, 210), input_rect, 2, border_radius=12)
+
+        display_ip = self.join_ip_text or "contoh: 192.168.1.10"
+        text_color = (245, 250, 255) if self.join_ip_text else (110, 130, 150)
+        self.draw_text("JOIN HOST", 46, s_width // 2, panel.y + 70, (255, 235, 0), True)
+        self.draw_text(display_ip, 24, input_rect.x + 18, input_rect.centery, text_color, center=False)
+        self.draw_text("Enter = Join  |  Backspace = Hapus  |  M = Menu", 18, s_width // 2, panel.y + 230, (220, 240, 255))
+
     def draw_stat(self, label, value, max_value, x, y, color):
         self.draw_text(label, 15, x, y, (220, 230, 245), center=False)
         bar_x = x + 70
@@ -753,6 +903,100 @@ class Game:
             self.all_sprites.add(b)
         sound.play("shoot")
 
+    def update_network_snapshot(self):
+        ship = SHIP_OPTIONS[self.selected_ship_index]
+        network_data["x"] = self.player.rect.centerx
+        network_data["y"] = self.player.rect.centery
+        network_data["health"] = self.player.health
+        network_data["max_health"] = self.player.max_health
+        network_data["ship_index"] = self.selected_ship_index
+        network_data["bullets"] = [
+            {
+                "id": bullet.net_id,
+                "x": bullet.rect.centerx,
+                "y": bullet.rect.centery,
+                "color": ship["color"],
+                "damage": bullet.damage
+            }
+            for bullet in self.bullets
+        ]
+        if is_host or not online_mode:
+            network_data["game_state"] = self.build_game_state()
+        else:
+            network_data["game_state"] = {}
+
+    def build_game_state(self):
+        return {
+            "wave": self.wave,
+            "killed_in_wave": self.killed_in_wave,
+            "score": self.score,
+            "game_over": self.game_over,
+            "state": self.state,
+            "enemies": [
+                {
+                    "id": enemy.net_id,
+                    "x": enemy.rect.centerx,
+                    "y": enemy.rect.centery,
+                    "health": enemy.health,
+                    "max_health": enemy.max_health,
+                    "is_boss": enemy.is_boss,
+                    "has_escaped": enemy.has_escaped
+                }
+                for enemy in self.enemies
+            ]
+        }
+
+    def apply_host_game_state(self):
+        state = enemy_network_data.get("game_state") or {}
+        if not state:
+            return
+
+        self.wave = state.get("wave", self.wave)
+        self.killed_in_wave = state.get("killed_in_wave", self.killed_in_wave)
+        self.score = state.get("score", self.score)
+        self.game_over = state.get("game_over", self.game_over)
+        if state.get("state") == "WIN":
+            self.state = "WIN"
+
+        existing = {enemy.net_id: enemy for enemy in self.enemies}
+        seen_ids = set()
+        for enemy_data in state.get("enemies", []):
+            enemy_id = enemy_data.get("id")
+            if enemy_id is None:
+                continue
+
+            enemy = existing.get(enemy_id)
+            if enemy is None:
+                enemy = Enemy(enemy_data.get("is_boss", False))
+                enemy.net_id = enemy_id
+                self.enemies.add(enemy)
+                self.all_sprites.add(enemy)
+
+            enemy.is_boss = enemy_data.get("is_boss", enemy.is_boss)
+            enemy.health = enemy_data.get("health", enemy.health)
+            enemy.max_health = enemy_data.get("max_health", enemy.max_health)
+            enemy.has_escaped = enemy_data.get("has_escaped", False)
+            enemy.rect.centerx = enemy_data.get("x", enemy.rect.centerx)
+            enemy.rect.centery = enemy_data.get("y", enemy.rect.centery)
+            seen_ids.add(enemy_id)
+
+        for enemy_id, enemy in existing.items():
+            if enemy_id not in seen_ids:
+                enemy.kill()
+
+    def sync_remote_bullets(self):
+        bullet_data = enemy_network_data.get("bullets", [])
+        current = list(self.remote_bullets)
+
+        for i, data in enumerate(bullet_data):
+            if i < len(current):
+                current[i].update_network(data)
+            else:
+                self.remote_bullets.add(NetworkBullet(data))
+
+        for bullet in current[len(bullet_data):]:
+            bullet.kill()
+
     def spawn_boss_spread(self, boss):
         sound.play("laser")
         self.boss_attack_text = "BOSS MODE: BULLET STORM"
@@ -778,11 +1022,17 @@ class Game:
             self.game_over = True
 
     def handle_menu_click(self, pos):
+        global is_host, online_mode, online_connected, network_status
+
         for i, rect in enumerate(self.ship_cards):
             if rect.collidepoint(pos):
                 self.selected_ship_index = i
                 return
         if hasattr(self, "start_button") and self.start_button.collidepoint(pos):
+            is_host = False
+            online_mode = False
+            online_connected = False
+            network_status = ""
             self.setup()
             self.state = "PLAYING"
             return
@@ -807,14 +1057,52 @@ class Game:
             pygame.quit()
             sys.exit()
 
+    def start_join_server(self):
+        global is_host, online_mode, online_connected, network_status
+
+        ip = self.join_ip_text.strip()
+        if not ip:
+            network_status = "IP host belum diisi"
+            return
+
+        is_host = False
+        online_mode = True
+        online_connected = False
+        network_status = "Menghubungkan ke host..."
+        threading.Thread(
+            target=connect_to_server,
+            args=(ip,),
+            daemon=True
+        ).start()
+        self.state = "WAITING"
+
     def update_playing(self):
         now = pygame.time.get_ticks()
         self.bg_sprites.update()
-        network_data["x"] = self.player.rect.centerx
-        network_data["y"] = self.player.rect.centery
-        network_data["health"] = self.player.health
 
-        self.online_player.update_network(enemy_network_data)
+        if self.online_player:
+            self.online_player.update_network(enemy_network_data)
+            self.sync_remote_bullets()
+
+        if online_mode and not is_host:
+            self.apply_host_game_state()
+            self.player.update()
+            self.bullets.update()
+            self.remote_bullets.update()
+            self.enemy_bullets.update()
+            self.boss_attack_timer = max(0, self.boss_attack_timer - 1)
+
+            keys = pygame.key.get_pressed()
+            if keys[K_SPACE] and now - self.shoot_cooldown > self.shoot_delay:
+                self.spawn_player_bullets()
+                self.shoot_cooldown = now
+
+            if pygame.sprite.spritecollide(self.player, self.enemy_bullets, True):
+                self.damage_player(7)
+
+            self.update_network_snapshot()
+            return
+
         self.all_sprites.update()
         self.boss_attack_timer = max(0, self.boss_attack_timer - 1)
 
@@ -889,10 +1177,40 @@ class Game:
                         self.killed_in_wave += 1
                     enemy.kill()
 
+        remote_hits = pygame.sprite.groupcollide(self.enemies, self.remote_bullets, False, True)
+        for enemy, hit_bullets in remote_hits.items():
+            new_hits = []
+            for bullet in hit_bullets:
+                hit_id = bullet.remote_id
+                if hit_id is None or hit_id not in self.remote_bullet_hits:
+                    new_hits.append(bullet)
+                    if hit_id is not None:
+                        self.remote_bullet_hits.add(hit_id)
+            if not new_hits:
+                continue
+
+            enemy.health -= sum(b.damage for b in new_hits)
+            if enemy.health <= 0:
+                self.explosions.append(Explosion(enemy.rect.centerx, enemy.rect.centery, (255, 150, 0), 95 if enemy.is_boss else 32, 9 if enemy.is_boss else 4.5, True))
+                sound.play("boss" if enemy.is_boss else "enemy")
+                self.score += 1000 if enemy.is_boss else 100
+                if enemy.is_boss:
+                    enemy.kill()
+                    self.boss_lasers.clear()
+                    self.state = "WIN"
+                else:
+                    if not enemy.orbit_target:
+                        self.killed_in_wave += 1
+                    enemy.kill()
+
         if pygame.sprite.spritecollide(self.player, self.enemy_bullets, True):
             self.damage_player(7)
 
+        self.update_network_snapshot()
+
     def run(self):
+        global is_host, online_mode, online_connected, network_status
+
         while True:
             for event in pygame.event.get():
                 if event.type == QUIT:
@@ -910,26 +1228,26 @@ class Game:
 
                     if self.state == "MENU":
                         if event.key == K_h:
-                            global is_host
                             is_host = True
+                            online_mode = True
+                            online_connected = False
+                            network_status = "Menunggu player 2 join..."
                             threading.Thread(
                                 target=host_server,
                                 daemon=True
                             ).start()
-                            self.setup()
-                            self.state = "PLAYING"
+                            self.state = "WAITING"
                         elif event.key == K_j:
-                            ip = input("Masukkan IP Host: ")
-                            threading.Thread(
-                                target=connect_to_server,
-                                args=(ip,),
-                                daemon=True
-                            ).start()
-                            self.setup()
-                            self.state = "PLAYING"
+                            self.join_ip_text = ""
+                            network_status = ""
+                            self.state = "JOIN_INPUT"
                         elif event.key in (K_1, K_2, K_3):
                             self.selected_ship_index = event.key - K_1
                         elif event.key in (K_RETURN, K_SPACE):
+                            is_host = False
+                            online_mode = False
+                            online_connected = False
+                            network_status = ""
                             self.setup()
                             self.state = "PLAYING"
                     elif self.game_over or self.state == "WIN":
@@ -939,6 +1257,26 @@ class Game:
                         elif event.key == K_m:
                             self.setup()
                             self.state = "MENU"
+                    elif self.state == "JOIN_INPUT":
+                        if event.key == K_RETURN:
+                            self.start_join_server()
+                        elif event.key == K_BACKSPACE:
+                            self.join_ip_text = self.join_ip_text[:-1]
+                        elif event.key == K_m:
+                            is_host = False
+                            online_mode = False
+                            online_connected = False
+                            network_status = ""
+                            self.state = "MENU"
+                        elif len(self.join_ip_text) < 45 and event.unicode and event.unicode.isprintable():
+                            if event.unicode not in " \t\r\n":
+                                self.join_ip_text += event.unicode
+                    elif self.state == "WAITING" and event.key == K_m:
+                        is_host = False
+                        online_mode = False
+                        online_connected = False
+                        network_status = ""
+                        self.state = "MENU"
 
                 if event.type == MOUSEBUTTONDOWN and event.button == 1:
                     if self.state == "MENU":
@@ -948,17 +1286,30 @@ class Game:
 
             if self.state == "PLAYING" and not self.game_over:
                 self.update_playing()
+            elif self.state == "WAITING" and online_connected:
+                self.setup()
+                self.state = "PLAYING"
 
             self.draw_background()
 
             if self.state == "MENU":
                 self.draw_ship_select_menu()
 
+            elif self.state == "JOIN_INPUT":
+                self.draw_join_input_screen()
+
+            elif self.state == "WAITING":
+                self.draw_waiting_screen()
+
             elif self.state == "PLAYING":
                 self.all_sprites.draw(screen)
+                if self.online_player:
+                    self.remote_bullets.draw(screen)
                 for laser in self.boss_lasers:
                     laser.draw(screen)
                 self.player.draw_hp_bar(screen)
+                if self.online_player:
+                    self.online_player.draw_hp_bar(screen)
                 for e in self.enemies:
                     e.draw_hp_bar(screen)
                 for exp in self.explosions[:]:
