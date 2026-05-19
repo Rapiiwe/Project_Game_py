@@ -1,23 +1,14 @@
 @echo off
-setlocal
-
-where py >nul 2>nul
-if %errorlevel%==0 (
-    py -m pip install -r requirements.txt
-    py Space_war.py
-    goto :end
+cd /d "%~dp0"
+echo Mengecek Python...
+python --version >nul 2>&1
+if %errorlevel% neq 0 (
+    echo Python tidak ditemukan. Install Python 3.9+ terlebih dahulu.
+    pause
+    exit /b 1
 )
-
-where python >nul 2>nul
-if %errorlevel%==0 (
-    python -m pip install -r requirements.txt
-    python Space_war.py
-    goto :end
-)
-
-echo Python tidak ditemukan.
-echo Install Python dari https://www.python.org/downloads/ lalu centang "Add python.exe to PATH".
+echo Menginstall dependensi...
+pip install -r requirements.txt --quiet
+echo Menjalankan game...
+python main.py
 pause
-
-:end
-endlocal
