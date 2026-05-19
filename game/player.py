@@ -27,10 +27,17 @@ class Player(pygame.sprite.Sprite):
         self.rect.clamp_ip(pygame.display.get_surface().get_rect())
 
     def draw_hp_bar(self, surface):
+        from .assets import get_font
+        font = get_font(13, True)
+        name_val = getattr(self, "name", "PILOT")
+        name_img = font.render(name_val, True, (255, 255, 255))
+        name_rect = name_img.get_rect(center=(self.rect.centerx, self.rect.bottom + 10))
+        surface.blit(name_img, name_rect)
+
         bar_width = 105
         fill = (max(0, self.health) / self.max_health) * bar_width
         x = self.rect.centerx - bar_width // 2
-        y = self.rect.bottom + 12
+        y = self.rect.bottom + 22
         pygame.draw.rect(surface, (20, 20, 30),   [x, y, bar_width, 8], border_radius=4)
         pygame.draw.rect(surface, (0, 255, 120),  [x, y, fill, 8],      border_radius=4)
         pygame.draw.rect(surface, (255, 255, 255), [x, y, bar_width, 8], 1, border_radius=4)
@@ -45,6 +52,7 @@ class OnlinePlayer(pygame.sprite.Sprite):
         self.image = pygame.Surface((80, 80), pygame.SRCALPHA)  # temp until set_ship
         self.rect = self.image.get_rect()
         self.set_ship(1)
+        self.name = "PILOT 2"
 
     def set_ship(self, ship_index):
         ship_index = max(0, min(len(SHIP_OPTIONS) - 1, ship_index))
@@ -66,12 +74,20 @@ class OnlinePlayer(pygame.sprite.Sprite):
         self.rect.centery = data.get("y", self.rect.centery)
         self.max_health = data.get("max_health", self.max_health)
         self.health = data.get("health", self.health)
+        self.name = data.get("name", "PILOT 2")
 
     def draw_hp_bar(self, surface):
+        from .assets import get_font
+        font = get_font(13, True)
+        name_val = getattr(self, "name", "PILOT 2")
+        name_img = font.render(name_val, True, (255, 255, 255))
+        name_rect = name_img.get_rect(center=(self.rect.centerx, self.rect.bottom + 10))
+        surface.blit(name_img, name_rect)
+
         bar_width = 105
         fill = (max(0, self.health) / max(1, self.max_health)) * bar_width
         x = self.rect.centerx - bar_width // 2
-        y = self.rect.bottom + 12
+        y = self.rect.bottom + 22
         pygame.draw.rect(surface, (35, 16, 28),   [x, y, bar_width, 8], border_radius=4)
         pygame.draw.rect(surface, (255, 90, 120), [x, y, fill, 8],      border_radius=4)
         pygame.draw.rect(surface, (255, 255, 255), [x, y, bar_width, 8], 1, border_radius=4)

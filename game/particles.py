@@ -99,3 +99,48 @@ class BackgroundParticle(pygame.sprite.Sprite):
         if self.rect.y > S_HEIGHT:
             self.rect.y = -10
             self.rect.x = random.randrange(0, S_WIDTH)
+
+class PowerUpEffect:
+    def __init__(self, x, y, color):
+        self.x = x
+        self.y = y
+        self.color = color
+        self.timer = 30
+        self.max_timer = 30
+        self.particles = []
+        for _ in range(15):
+            speed = random.uniform(1.0, 3.5)
+            ang = random.uniform(0, math.tau)
+            self.particles.append([
+                [x, y],
+                [math.cos(ang) * speed, math.sin(ang) * speed],
+                random.randint(4, 8)
+            ])
+
+    def update(self):
+        self.timer -= 1
+        for p in self.particles:
+            p[0][0] += p[1][0]
+            p[0][1] += p[1][1]
+            p[1][0] *= 0.92
+            p[1][1] *= 0.92
+            p[2] -= 0.2
+
+    def draw(self, surface):
+        life = max(0, self.timer / self.max_timer)
+        radius = int((1 - life) * 60)
+        alpha = int(255 * life)
+        
+        if radius > 2 and alpha > 0:
+            size = radius * 2 + 8
+            layer = pygame.Surface((size, size), pygame.SRCALPHA)
+            center = size // 2
+            
+            pygame.draw.circle(layer, (*self.color, alpha), (center, center), radius, max(2, int(6 * life)))
+            pygame.draw.circle(layer, (*self.color, int(alpha * 0.3)), (center, center), radius - 2)
+            surface.blit(layer, (int(self.x) - center, int(self.y) - center))
+            
+        for p in self.particles:
+            if p[2] > 0:
+                pygame.draw.circle(surface, self.color, (int(p[0][0]), int(p[0][1])), int(p[2]))
+

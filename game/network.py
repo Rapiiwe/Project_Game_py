@@ -18,7 +18,8 @@ network_data: dict = {
     "health": 100, "max_health": 100,
     "ship_index": 0,
     "bullets": [],
-    "game_state": {}
+    "game_state": {},
+    "name": "PILOT"
 }
 
 enemy_network_data: dict = {
@@ -26,7 +27,8 @@ enemy_network_data: dict = {
     "health": 100, "max_health": 100,
     "ship_index": 0,
     "bullets": [],
-    "game_state": {}
+    "game_state": {},
+    "name": "PILOT 2"
 }
 
 
@@ -41,9 +43,9 @@ def reset_network():
     conn = None
     client_socket = None
     network_data.update({"x": 0, "y": 0, "health": 100, "max_health": 100,
-                        "ship_index": 0, "bullets": [], "game_state": {}})
+                        "ship_index": 0, "bullets": [], "game_state": {}, "name": "PILOT"})
     enemy_network_data.update({"x": 0, "y": 0, "health": 100, "max_health": 100,
-                                "ship_index": 0, "bullets": [], "game_state": {}})
+                                "ship_index": 0, "bullets": [], "game_state": {}, "name": "PILOT 2"})
 
 
 def host_server():
@@ -93,6 +95,7 @@ def host_server():
                 "ship_index": received.get("ship_index", enemy_network_data["ship_index"]),
                 "bullets":    received.get("bullets",    []),
                 "game_state": received.get("game_state", enemy_network_data["game_state"]),
+                "name":       received.get("name",       "PILOT 2"),
             })
             conn.send(pickle.dumps(network_data))
         except Exception:
@@ -134,6 +137,7 @@ def connect_to_server(ip):
                 "ship_index": received.get("ship_index", enemy_network_data["ship_index"]),
                 "bullets":    received.get("bullets",    []),
                 "game_state": received.get("game_state", enemy_network_data["game_state"]),
+                "name":       received.get("name",       "PILOT"),
             })
         except Exception:
             break

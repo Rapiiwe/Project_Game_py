@@ -20,15 +20,18 @@ def _next_id():
 
 
 class Enemy(pygame.sprite.Sprite):
-    def __init__(self, is_boss=False, orbit_target=None, orbit_angle=0):
+    def __init__(self, is_boss=False, orbit_target=None, orbit_angle=0, map_level=1):
         super().__init__()
         self.net_id = _next_id()
         self.is_boss = is_boss
         self.orbit_target = orbit_target
         self.orbit_angle = orbit_angle
+        self.map_level = map_level
 
         if is_boss:
-            self.image = load_image("Boss.png", None, True)
+            img_name = "EliteBoss.png" if map_level == 2 else "Boss.png"
+            size = (270, 250) if map_level == 2 else None
+            self.image = load_image(img_name, size, True)
             self.laser_delay = 3500
             self.last_laser = pygame.time.get_ticks()
             self.laser_active = False
@@ -40,7 +43,9 @@ class Enemy(pygame.sprite.Sprite):
             self.shoot_delay = 2050
             self.attack_mode = 0
         else:
-            self.image = load_image("EnemyShip.png", None, True)
+            img_name = "EliteEnemy.png" if map_level == 2 else "EnemyShip.png"
+            size = (92, 92) if map_level == 2 else None
+            self.image = load_image(img_name, size, True)
             if self.image is None:
                 self.image = pygame.Surface([70, 70], pygame.SRCALPHA)
                 pygame.draw.polygon(self.image, (255, 60, 70), [(35, 70), (0, 0), (70, 0)])
@@ -55,13 +60,13 @@ class Enemy(pygame.sprite.Sprite):
 
     def reset_pos(self):
         self.timer = random.randint(0, 1000)
+        self.center_y = 150 if self.is_boss else random.randint(75, 210)
+        self.start_x = S_WIDTH // 2 if self.is_boss else random.randint(120, S_WIDTH - 120)
+        self.amplitude = 250 if self.is_boss else random.randint(70, 210)
+        self.frequency = 0.006 if self.is_boss else random.uniform(0.011, 0.022)
+        self.down_speed = 0 if self.is_boss else random.uniform(0.85, 1.85)
         if not self.orbit_target:
             self.rect.y = -180
-            self.center_y = 150 if self.is_boss else random.randint(75, 210)
-            self.start_x = S_WIDTH // 2 if self.is_boss else random.randint(120, S_WIDTH - 120)
-            self.amplitude = 250 if self.is_boss else random.randint(70, 210)
-            self.frequency = 0.006 if self.is_boss else random.uniform(0.011, 0.022)
-            self.down_speed = 0 if self.is_boss else random.uniform(0.85, 1.85)
 
     def update(self):
         if self.orbit_target and self.orbit_target.alive():

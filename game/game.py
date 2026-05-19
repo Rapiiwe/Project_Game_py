@@ -6,12 +6,13 @@ from pygame.locals import *
 from .constants import S_WIDTH, S_HEIGHT, FPS, SHIP_OPTIONS
 from .assets import load_image, get_font
 from .sound import SoundManager
-from .particles import Explosion, BackgroundParticle
+from .particles import Explosion, BackgroundParticle, PowerUpEffect
 from .player import Player, OnlinePlayer
 from .enemy import Enemy, reset_enemy_id
-from .bullets import Bullet, NetworkBullet, BossLaser, reset_bullet_id
+from .bullets import Bullet, NetworkBullet, BossLaser, LaserBullet, reset_bullet_id
+from .powerup import PowerUp
+import random
 from . import network as net
-
 
 class Game:
     def __init__(self):
@@ -31,12 +32,20 @@ class Game:
             bg.fill((5, 8, 22))
         self.bg_image = bg
 
+        bg2 = load_image("Map2.png", (S_WIDTH, S_HEIGHT), alpha=False)
+        if bg2 is None:
+            bg2 = pygame.Surface((S_WIDTH, S_HEIGHT))
+            bg2.fill((10, 5, 20))
+        self.bg_image_map2 = bg2
+
         self.sound = SoundManager()
 
         self.selected_ship_index = 0
         self.ship_cards   = []
         self.join_ip_text = ""
         self.state        = "MENU"
+        self.player_name  = "PILOT"
+        self.name_active  = False
 
         self.setup()
         self.run()
@@ -52,6 +61,7 @@ class Game:
         self.remote_bullets = pygame.sprite.Group()
         self.enemy_bullets  = pygame.sprite.Group()
         self.bg_sprites     = pygame.sprite.Group()
+        self.powerups       = pygame.sprite.Group()
 
         self.explosions       = []
         self.boss_lasers      = []
@@ -59,8 +69,12 @@ class Game:
 
         self.score            = 0
         self.game_over        = False
+        self.map_level        = 1
         self.wave             = 1
-        self.wave_targets     = {1: 5, 2: 10, 3: 15, 4: 1}
+        self.wave_targets     = {
+            1: {1: 5, 2: 10, 3: 15, 4: 1},
+            2: {1: 8, 2: 12, 3: 15, 4: 20, 5: 1}
+        }
         self.killed_in_wave   = 0
         self.boss_spawned     = False
         self.shoot_cooldown   = 0
@@ -70,11 +84,14 @@ class Game:
         self.flash_alpha      = 0
         self.boss_attack_text = ""
         self.boss_attack_timer = 0
+        self.buff_speed_timer = 0
+        self.buff_laser_timer = 0
 
         for _ in range(60):
             self.bg_sprites.add(BackgroundParticle())
 
         self.player = Player(SHIP_OPTIONS[self.selected_ship_index])
+        self.player.name = self.player_name
         self.online_player = None
         if net.online_mode:
             self.online_player = OnlinePlayer()
@@ -85,20 +102,33 @@ class Game:
 
     # ── Wave / Enemy spawning ─────────────────────────────────────────
     def spawn_wave_enemies(self):
-        if self.wave <= 3:
+        targets = self.wave_targets[self.map_level]
+        is_boss_wave = (self.wave == len(targets))
+
+        if not is_boss_wave:
             current_count = len(self.enemies)
-            needed = min(6, self.wave_targets[self.wave] - self.killed_in_wave)
+            needed = min(6, targets[self.wave] - self.killed_in_wave)
             for _ in range(max(0, needed - current_count)):
-                e = Enemy(False)
+                e = Enemy(False, map_level=self.map_level)
+                if self.map_level == 2:
+                    e.health += 15
+                    e.max_health += 15
+                    e.down_speed *= 1.2
                 self.enemies.add(e)
                 self.all_sprites.add(e)
-        elif self.wave == 4 and not self.boss_spawned:
-            self.boss = Enemy(True)
+        elif is_boss_wave and not self.boss_spawned:
+            self.boss = Enemy(True, map_level=self.map_level)
+            if self.map_level == 2:
+                self.boss.health += 1500
+                self.boss.max_health += 1500
             self.enemies.add(self.boss)
             self.all_sprites.add(self.boss)
             for i in range(5):
                 angle = (2 * math.pi / 5) * i
-                guard = Enemy(False, self.boss, angle)
+                guard = Enemy(False, self.boss, angle, map_level=self.map_level)
+                if self.map_level == 2:
+                    guard.health += 25
+                    guard.max_health += 25
                 self.enemies.add(guard)
                 self.all_sprites.add(guard)
             self.boss_spawned = True
@@ -131,16 +161,33 @@ class Game:
         pygame.draw.rect(self.screen, color,         [bar_x, y + 3, fill_w, 10], border_radius=5)
 
     def draw_background(self):
-        self.screen.blit(self.bg_image, (0, 0))
+        bg = self.bg_image_map2 if self.map_level == 2 else self.bg_image
+        self.screen.blit(bg, (0, 0))
         self.bg_sprites.draw(self.screen)
         self.screen.blit(self.fog_overlay,  (0, 0))
         self.screen.blit(self.dark_overlay, (0, 0))
 
     # ── HUD draw methods ──────────────────────────────────────────────
     def draw_ship_select_menu(self):
-        title_y = 70
-        self.draw_text("SPACE WAR X PANTAI PADANG", 44, S_WIDTH // 2, title_y, (0, 255, 210), True)
-        self.draw_text("PILIH PESAWAT PLAYER",      25, S_WIDTH // 2, title_y + 49, (255, 235, 0))
+        title_y = 40
+        self.draw_text("SPACE WAR X PANTAI PADANG", 40, S_WIDTH // 2, title_y, (0, 255, 210), True)
+        self.draw_text("PILIH PESAWAT PLAYER",      22, S_WIDTH // 2, title_y + 45, (255, 235, 0))
+
+        # Name Input Box
+        self.name_input_rect = pygame.Rect(S_WIDTH // 2 - 160, 105, 320, 44)
+        bg_color = (15, 22, 38) if self.name_active else (8, 12, 22)
+        border_color = (0, 255, 210) if self.name_active else (100, 120, 150)
+        pygame.draw.rect(self.screen, bg_color,     self.name_input_rect, border_radius=10)
+        pygame.draw.rect(self.screen, border_color, self.name_input_rect, 2, border_radius=10)
+        
+        if not self.player_name and not self.name_active:
+            self.draw_text("Ketik nama pilot disini...", 18, self.name_input_rect.centerx, self.name_input_rect.centery, (100, 120, 140))
+        else:
+            cursor = "|" if (self.name_active and pygame.time.get_ticks() // 400 % 2 == 0) else ""
+            self.draw_text(f"{self.player_name}{cursor}", 19, self.name_input_rect.centerx, self.name_input_rect.centery, (255, 255, 255))
+        
+        self.draw_text("NAMA PILOT:", 16, self.name_input_rect.left - 75, self.name_input_rect.centery, (210, 230, 255))
+
         self.ship_cards = []
 
         card_w, card_h = 300, 338
@@ -213,7 +260,8 @@ class Game:
         pulse = int(35 + 25 * math.sin(pygame.time.get_ticks() * 0.008))
         pygame.draw.rect(self.screen, (18, 8, 28),                panel, border_radius=20)
         pygame.draw.rect(self.screen, (170 + pulse, 45, 255), panel, 3, border_radius=20)
-        self.draw_text("FINAL BOSS  //  VOID BOSSSHIP", 18, S_WIDTH // 2, 32, (255, 215, 255))
+        boss_name = "ELITE BOSS  //  ABYSSAL DREADNOUGHT" if boss.map_level == 2 else "FINAL BOSS  //  VOID BOSSSHIP"
+        self.draw_text(boss_name, 18, S_WIDTH // 2, 32, (255, 215, 255))
         bar  = pygame.Rect(panel.x + 28, panel.y + 34, panel.width - 56, 15)
         fill = int((max(0, boss.health) / boss.max_health) * bar.width)
         pygame.draw.rect(self.screen, (45, 8, 45),      bar, border_radius=8)
@@ -266,11 +314,22 @@ class Game:
         color  = ship["color"]
         damage = ship["damage"]
         offsets = [-22, 0, 22] if ship["bullet_count"] == 3 else [-18, 18]
+        
+        is_speed = getattr(self, 'buff_speed_timer', 0) > 0
+        b_speed = -25 if is_speed else -15
+
         for offset in offsets:
-            b = Bullet(self.player.rect.centerx + offset, self.player.rect.top + 6, color, -15, damage, 7, 20)
+            b = Bullet(self.player.rect.centerx + offset, self.player.rect.top + 6, color, b_speed, damage, 7, 20)
             self.bullets.add(b)
             self.all_sprites.add(b)
         self.sound.play("shoot")
+
+    def spawn_player_laser(self):
+        b = LaserBullet(self.player.rect.centerx, self.player.rect.top - 20, damage=1)
+        self.bullets.add(b)
+        self.all_sprites.add(b)
+        if getattr(self, 'buff_laser_timer', 0) % 15 == 0:
+            self.sound.play("laser")
 
     def update_network_snapshot(self):
         ship = SHIP_OPTIONS[self.selected_ship_index]
@@ -279,9 +338,10 @@ class Game:
         net.network_data["health"]     = self.player.health
         net.network_data["max_health"] = self.player.max_health
         net.network_data["ship_index"] = self.selected_ship_index
+        net.network_data["name"]       = self.player_name or "PILOT"
         net.network_data["bullets"]    = [
             {"id": b.net_id, "x": b.rect.centerx, "y": b.rect.centery,
-             "color": ship["color"], "damage": b.damage}
+            "color": ship["color"], "damage": b.damage, "is_laser": getattr(b, 'speed', 0) == -60}
             for b in self.bullets
         ]
         if net.is_host or not net.online_mode:
@@ -291,6 +351,7 @@ class Game:
 
     def build_game_state(self):
         return {
+            "map_level":      self.map_level,
             "wave":           self.wave,
             "killed_in_wave": self.killed_in_wave,
             "score":          self.score,
@@ -298,8 +359,8 @@ class Game:
             "state":          self.state,
             "enemies": [
                 {"id": e.net_id, "x": e.rect.centerx, "y": e.rect.centery,
-                 "health": e.health, "max_health": e.max_health,
-                 "is_boss": e.is_boss, "has_escaped": e.has_escaped}
+                "health": e.health, "max_health": e.max_health,
+                "is_boss": e.is_boss, "has_escaped": e.has_escaped}
                 for e in self.enemies
             ],
         }
@@ -308,6 +369,7 @@ class Game:
         state = net.enemy_network_data.get("game_state") or {}
         if not state:
             return
+        self.map_level      = state.get("map_level",      self.map_level)
         self.wave           = state.get("wave",           self.wave)
         self.killed_in_wave = state.get("killed_in_wave", self.killed_in_wave)
         self.score          = state.get("score",          self.score)
@@ -323,7 +385,7 @@ class Game:
                 continue
             enemy = existing.get(eid)
             if enemy is None:
-                enemy = Enemy(ed.get("is_boss", False))
+                enemy = Enemy(ed.get("is_boss", False), map_level=self.map_level)
                 enemy.net_id = eid
                 self.enemies.add(enemy)
                 self.all_sprites.add(enemy)
@@ -366,6 +428,55 @@ class Game:
             self.enemy_bullets.add(b)
             self.all_sprites.add(b)
 
+    def spawn_boss_elite_barrage(self, boss):
+        self.sound.play("laser")
+        self.boss_attack_text  = "ELITE BOSS: STARBURST CHAOS"
+        self.boss_attack_timer = 95
+        ox, oy = boss.rect.centerx, boss.rect.bottom - 18
+        
+        # Ring 1: Green/Teal bullets going outwards
+        for i in range(16):
+            angle = (i * 2 * math.pi / 16)
+            dx = math.cos(angle) * 5.0
+            dy = math.sin(angle) * 5.0
+            if dy > -1.0:
+                b = Bullet(ox, oy, (0, 255, 150), dy, 12, 10, 22, dx)
+                self.enemy_bullets.add(b)
+                self.all_sprites.add(b)
+                
+        # Ring 2: Purple bullets going outwards with offset
+        for i in range(16):
+            angle = (i * 2 * math.pi / 16) + (math.pi / 16)
+            dx = math.cos(angle) * 3.5
+            dy = math.sin(angle) * 3.5
+            if dy > -1.0:
+                b = Bullet(ox, oy, (230, 80, 255), dy, 12, 8, 20, dx)
+                self.enemy_bullets.add(b)
+                self.all_sprites.add(b)
+
+    def spawn_boss_tracking_crossfire(self, boss):
+        self.sound.play("shoot")
+        self.boss_attack_text  = "ELITE BOSS: TARGETED CROSSFIRE"
+        self.boss_attack_timer = 95
+        ox, oy = boss.rect.centerx, boss.rect.bottom - 18
+        
+        # Targeted wave at player
+        angle_to_player = math.atan2(self.player.rect.centery - oy, self.player.rect.centerx - ox)
+        for offset in [-0.22, 0, 0.22]:
+            angle = angle_to_player + offset
+            dx = math.cos(angle) * 6.5
+            dy = math.sin(angle) * 6.5
+            b = Bullet(ox, oy, (255, 220, 0), dy, 15, 10, 25, dx)
+            self.enemy_bullets.add(b)
+            self.all_sprites.add(b)
+            
+        # Side flanking vertical fire
+        for side_offset in [-160, -100, 100, 160]:
+            bx = ox + side_offset
+            b = Bullet(bx, oy + 20, (255, 60, 60), 6.0, 12, 8, 22, 0)
+            self.enemy_bullets.add(b)
+            self.all_sprites.add(b)
+
     def damage_player(self, amount):
         self.player.health -= amount
         self.explosions.append(Explosion(self.player.rect.centerx, self.player.rect.centery, (0, 200, 255), 14, 3, False))
@@ -374,6 +485,11 @@ class Game:
 
     # ── Input handlers ────────────────────────────────────────────────
     def handle_menu_click(self, pos):
+        if hasattr(self, "name_input_rect") and self.name_input_rect.collidepoint(pos):
+            self.name_active = True
+        else:
+            self.name_active = False
+
         for i, rect in enumerate(self.ship_cards):
             if rect.collidepoint(pos):
                 self.selected_ship_index = i
@@ -413,7 +529,7 @@ class Game:
         net.start_join_thread(ip)
         self.state = "WAITING"
 
-    # ── Update loop ───────────────────────────────────────────────────
+    #Update loop
     def update_playing(self):
         now = pygame.time.get_ticks()
         self.bg_sprites.update()
@@ -430,10 +546,30 @@ class Game:
             self.remote_bullets.update()
             self.enemy_bullets.update()
             self.boss_attack_timer = max(0, self.boss_attack_timer - 1)
+            
+            if getattr(self, 'buff_speed_timer', 0) > 0: self.buff_speed_timer -= 1
+            
+            powerup_hits = pygame.sprite.spritecollide(self.player, self.powerups, True)
+            for p in powerup_hits:
+                self.explosions.append(PowerUpEffect(p.rect.centerx, p.rect.centery, p.color_base))
+                if p.type == 'health':
+                    self.player.health = min(self.player.health + 30, self.player.max_health)
+                elif p.type == 'speed':
+                    self.buff_speed_timer = 600
+                elif p.type == 'laser':
+                    self.buff_laser_timer = 300
+
             keys = pygame.key.get_pressed()
-            if keys[K_SPACE] and now - self.shoot_cooldown > self.shoot_delay:
-                self.spawn_player_bullets()
-                self.shoot_cooldown = now
+            current_shoot_delay = self.shoot_delay * 0.55 if getattr(self, 'buff_speed_timer', 0) > 0 else self.shoot_delay
+            is_laser_buff = getattr(self, 'buff_laser_timer', 0) > 0
+            
+            if keys[K_SPACE]:
+                if is_laser_buff:
+                    self.spawn_player_laser()
+                    self.buff_laser_timer -= 1
+                elif now - self.shoot_cooldown > current_shoot_delay:
+                    self.spawn_player_bullets()
+                    self.shoot_cooldown = now
             if pygame.sprite.spritecollide(self.player, self.enemy_bullets, True):
                 self.damage_player(7)
             self.update_network_snapshot()
@@ -442,11 +578,30 @@ class Game:
         # Host / solo
         self.all_sprites.update()
         self.boss_attack_timer = max(0, self.boss_attack_timer - 1)
+        
+        if getattr(self, 'buff_speed_timer', 0) > 0: self.buff_speed_timer -= 1
+        
+        powerup_hits = pygame.sprite.spritecollide(self.player, self.powerups, True)
+        for p in powerup_hits:
+            self.explosions.append(PowerUpEffect(p.rect.centerx, p.rect.centery, p.color_base))
+            if p.type == 'health':
+                self.player.health = min(self.player.health + 30, self.player.max_health)
+            elif p.type == 'speed':
+                self.buff_speed_timer = 600
+            elif p.type == 'laser':
+                self.buff_laser_timer = 300
 
         keys = pygame.key.get_pressed()
-        if keys[K_SPACE] and now - self.shoot_cooldown > self.shoot_delay:
-            self.spawn_player_bullets()
-            self.shoot_cooldown = now
+        current_shoot_delay = self.shoot_delay * 0.55 if getattr(self, 'buff_speed_timer', 0) > 0 else self.shoot_delay
+        is_laser_buff = getattr(self, 'buff_laser_timer', 0) > 0
+        
+        if keys[K_SPACE]:
+            if is_laser_buff:
+                self.spawn_player_laser()
+                self.buff_laser_timer -= 1
+            elif now - self.shoot_cooldown > current_shoot_delay:
+                self.spawn_player_bullets()
+                self.shoot_cooldown = now
 
         # Enemies that escaped
         for enemy in list(self.enemies):
@@ -458,28 +613,43 @@ class Game:
                 enemy.kill()
 
         # Wave progression
-        if self.wave <= 3:
-            if self.killed_in_wave >= self.wave_targets[self.wave]:
+        targets = self.wave_targets[self.map_level]
+        is_boss_wave = (self.wave == len(targets))
+        
+        if not is_boss_wave:
+            if self.killed_in_wave >= targets[self.wave]:
                 self.wave += 1
                 self.killed_in_wave = 0
                 for b in self.enemy_bullets:
                     b.kill()
                 self.spawn_wave_enemies()
-            elif len(self.enemies) < min(6, self.wave_targets[self.wave] - self.killed_in_wave):
+            elif len(self.enemies) < min(6, targets[self.wave] - self.killed_in_wave):
                 self.spawn_wave_enemies()
 
         # Enemy shooting
         for enemy in list(self.enemies):
             if now - enemy.last_shot > enemy.shoot_delay:
                 if enemy.is_boss:
-                    if enemy.attack_mode == 0:
-                        self.boss_lasers.append(BossLaser(enemy))
-                        self.boss_attack_text  = "BOSS MODE: PLASMA LASER"
-                        self.boss_attack_timer = 118
-                        self.sound.play("laser")
+                    if enemy.map_level == 2:
+                        if enemy.attack_mode == 0:
+                            self.boss_lasers.append(BossLaser(enemy, x_offset=0, spotlight=True))
+                            self.boss_attack_text  = "ELITE BOSS: SPOTLIGHT BEAM"
+                            self.boss_attack_timer = 118
+                            self.sound.play("laser")
+                        elif enemy.attack_mode == 1:
+                            self.spawn_boss_elite_barrage(enemy)
+                        else:
+                            self.spawn_boss_tracking_crossfire(enemy)
+                        enemy.attack_mode = (enemy.attack_mode + 1) % 3
                     else:
-                        self.spawn_boss_spread(enemy)
-                    enemy.attack_mode = 1 - enemy.attack_mode
+                        if enemy.attack_mode == 0:
+                            self.boss_lasers.append(BossLaser(enemy))
+                            self.boss_attack_text  = "BOSS MODE: PLASMA LASER"
+                            self.boss_attack_timer = 118
+                            self.sound.play("laser")
+                        else:
+                            self.spawn_boss_spread(enemy)
+                        enemy.attack_mode = 1 - enemy.attack_mode
                 else:
                     eb = Bullet(enemy.rect.centerx, enemy.rect.bottom, (255, 70, 70), 5, 10, 7, 18)
                     self.enemy_bullets.add(eb)
@@ -495,9 +665,9 @@ class Game:
                 laser.flash_done = True
                 self.flash_alpha = 130
                 self.explosions.append(Explosion(laser.x, laser.start_y + 8, (255, 70, 255), 28, 5, True))
-                self.explosions.append(Explosion(laser.x, S_HEIGHT - 26,     (255, 170, 90), 34, 6, True))
+                self.explosions.append(Explosion(laser.target_x, S_HEIGHT - 26, (255, 170, 90), 34, 6, True))
                 self.sound.play("laser")
-            if laser.can_damage() and laser.get_rect().colliderect(self.player.rect):
+            if laser.can_damage() and laser.collides_with(self.player):
                 self.damage_player(5)
             if not laser.alive:
                 self.boss_lasers.remove(laser)
@@ -509,10 +679,31 @@ class Game:
                 (255, 150, 0), 95 if enemy.is_boss else 32, 9 if enemy.is_boss else 4.5, True))
             self.sound.play("boss" if enemy.is_boss else "enemy")
             self.score += 1000 if enemy.is_boss else 100
+            
+            if not enemy.is_boss and random.random() < 0.20:
+                p = PowerUp(enemy.rect.centerx, enemy.rect.centery)
+                self.powerups.add(p)
+                self.all_sprites.add(p)
+                
             if enemy.is_boss:
+                for e in list(self.enemies):
+                    if e.orbit_target == enemy:
+                        self.explosions.append(Explosion(e.rect.centerx, e.rect.centery, (255, 150, 0), 32, 4.5, True))
+                        e.kill()
+
                 enemy.kill()
                 self.boss_lasers.clear()
-                self.state = "WIN"
+                
+                if self.map_level == 1:
+                    self.map_level = 2
+                    self.wave = 1
+                    self.killed_in_wave = 0
+                    self.boss_spawned = False
+                    for b in self.enemy_bullets:
+                        b.kill()
+                    self.spawn_wave_enemies()
+                else:
+                    self.state = "WIN"
             else:
                 if not enemy.orbit_target:
                     self.killed_in_wave += 1
@@ -560,23 +751,32 @@ class Game:
                         self.sound.toggle_music()
 
                     if self.state == "MENU":
-                        if event.key == K_h:
-                            net.is_host          = True
-                            net.online_mode      = True
-                            net.online_connected = False
-                            net.network_status   = "Menunggu player 2 join..."
-                            net.start_host_thread()
-                            self.state = "WAITING"
-                        elif event.key == K_j:
-                            self.join_ip_text  = ""
-                            net.network_status = ""
-                            self.state = "JOIN_INPUT"
-                        elif event.key in (K_1, K_2, K_3):
-                            self.selected_ship_index = event.key - K_1
-                        elif event.key in (K_RETURN, K_SPACE):
-                            net.reset_network()
-                            self.setup()
-                            self.state = "PLAYING"
+                        if self.name_active:
+                            if event.key == K_RETURN:
+                                self.name_active = False
+                            elif event.key == K_BACKSPACE:
+                                self.player_name = self.player_name[:-1]
+                            elif len(self.player_name) < 15 and event.unicode and event.unicode.isprintable():
+                                if event.unicode not in "\t\r\n":
+                                    self.player_name += event.unicode
+                        else:
+                            if event.key == K_h:
+                                net.is_host          = True
+                                net.online_mode      = True
+                                net.online_connected = False
+                                net.network_status   = "Menunggu player 2 join..."
+                                net.start_host_thread()
+                                self.state = "WAITING"
+                            elif event.key == K_j:
+                                self.join_ip_text  = ""
+                                net.network_status = ""
+                                self.state = "JOIN_INPUT"
+                            elif event.key in (K_1, K_2, K_3):
+                                self.selected_ship_index = event.key - K_1
+                            elif event.key in (K_RETURN, K_SPACE):
+                                net.reset_network()
+                                self.setup()
+                                self.state = "PLAYING"
 
                     elif self.game_over or self.state == "WIN":
                         if event.key == K_r:
@@ -645,10 +845,13 @@ class Game:
                     self.screen_overlay.fill((255, 210, 255, self.flash_alpha))
                     self.screen.blit(self.screen_overlay, (0, 0))
 
-                status = f"WAVE {self.wave}" if self.wave < 4 else "FINAL BOSS"
+                targets = self.wave_targets[self.map_level]
+                is_boss_wave = (self.wave == len(targets))
+                
+                status = f"MAP {self.map_level} - WAVE {self.wave}" if not is_boss_wave else f"MAP {self.map_level} - BOSS"
                 self.draw_text(status, 25, 160, 42, (255, 235, 0))
-                if self.wave < 4:
-                    self.draw_text(f"TARGET: {self.killed_in_wave}/{self.wave_targets[self.wave]}", 20, 160, 76)
+                if not is_boss_wave:
+                    self.draw_text(f"TARGET: {self.killed_in_wave}/{targets[self.wave]}", 20, 160, 76)
                     self.draw_text("Enemy yang lolos akan meledak di bawah!", 17, 240, 108, (255, 160, 110))
                 else:
                     self.draw_boss_hp_ui()
