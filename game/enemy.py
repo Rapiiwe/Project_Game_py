@@ -6,18 +6,15 @@ from .assets import load_image
 
 _next_enemy_id = 1
 
-
 def reset_enemy_id():
     global _next_enemy_id
     _next_enemy_id = 1
-
 
 def _next_id():
     global _next_enemy_id
     val = _next_enemy_id
     _next_enemy_id += 1
     return val
-
 
 class Enemy(pygame.sprite.Sprite):
     def __init__(self, is_boss=False, orbit_target=None, orbit_angle=0, map_level=1):

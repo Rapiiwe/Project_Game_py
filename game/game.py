@@ -50,7 +50,7 @@ class Game:
         self.setup()
         self.run()
 
-    # ── Setup / Reset ─────────────────────────────────────────────────
+    #Setup / Reset
     def setup(self):
         reset_enemy_id()
         reset_bullet_id()
@@ -100,7 +100,7 @@ class Game:
         self.spawn_wave_enemies()
         self.update_network_snapshot()
 
-    # ── Wave / Enemy spawning ─────────────────────────────────────────
+    #Wave / Enemy spawning
     def spawn_wave_enemies(self):
         targets = self.wave_targets[self.map_level]
         is_boss_wave = (self.wave == len(targets))
@@ -133,7 +133,7 @@ class Game:
                 self.all_sprites.add(guard)
             self.boss_spawned = True
 
-    # ── Helpers ───────────────────────────────────────────────────────
+    #Helpers
     def draw_text(self, text, size, x, y, color=(255, 255, 255), pulse=False, center=True):
         if pulse:
             size = int(size * (1 + 0.05 * math.sin(pygame.time.get_ticks() * 0.005)))
@@ -167,7 +167,7 @@ class Game:
         self.screen.blit(self.fog_overlay,  (0, 0))
         self.screen.blit(self.dark_overlay, (0, 0))
 
-    # ── HUD draw methods ──────────────────────────────────────────────
+    #HUD draw methods
     def draw_ship_select_menu(self):
         title_y = 40
         self.draw_text("SPACE WAR X PANTAI PADANG", 40, S_WIDTH // 2, title_y, (0, 255, 210), True)
@@ -308,7 +308,7 @@ class Game:
         self.draw_button(self.end_menu_button,    "MENU",    (255, 235, 0))
         self.draw_button(self.end_exit_button,    "QUIT",    (255, 85, 95), (25, 12, 18))
 
-    # ── Game logic ────────────────────────────────────────────────────
+    #Game logic
     def spawn_player_bullets(self):
         ship   = SHIP_OPTIONS[self.selected_ship_index]
         color  = ship["color"]
@@ -434,7 +434,6 @@ class Game:
         self.boss_attack_timer = 95
         ox, oy = boss.rect.centerx, boss.rect.bottom - 18
         
-        # Ring 1: Green/Teal bullets going outwards
         for i in range(16):
             angle = (i * 2 * math.pi / 16)
             dx = math.cos(angle) * 5.0
@@ -444,7 +443,6 @@ class Game:
                 self.enemy_bullets.add(b)
                 self.all_sprites.add(b)
                 
-        # Ring 2: Purple bullets going outwards with offset
         for i in range(16):
             angle = (i * 2 * math.pi / 16) + (math.pi / 16)
             dx = math.cos(angle) * 3.5
@@ -483,7 +481,7 @@ class Game:
         if self.player.health <= 0:
             self.game_over = True
 
-    # ── Input handlers ────────────────────────────────────────────────
+    #Input handlers
     def handle_menu_click(self, pos):
         if hasattr(self, "name_input_rect") and self.name_input_rect.collidepoint(pos):
             self.name_active = True
@@ -539,7 +537,7 @@ class Game:
             self.sync_remote_bullets()
 
         if net.online_mode and not net.is_host:
-            # Client: apply authoritative state from host
+            
             self.apply_host_game_state()
             self.player.update()
             self.bullets.update()
@@ -575,7 +573,7 @@ class Game:
             self.update_network_snapshot()
             return
 
-        # Host / solo
+        #Host / solo
         self.all_sprites.update()
         self.boss_attack_timer = max(0, self.boss_attack_timer - 1)
         
@@ -603,7 +601,6 @@ class Game:
                 self.spawn_player_bullets()
                 self.shoot_cooldown = now
 
-        # Enemies that escaped
         for enemy in list(self.enemies):
             if not enemy.is_boss and enemy.has_escaped:
                 self.explosions.append(Explosion(enemy.rect.centerx, S_HEIGHT - 24, (255, 120, 40), 24, 4, True))
@@ -612,7 +609,7 @@ class Game:
                     self.damage_player(8)
                 enemy.kill()
 
-        # Wave progression
+        #Wave progression
         targets = self.wave_targets[self.map_level]
         is_boss_wave = (self.wave == len(targets))
         
@@ -626,7 +623,7 @@ class Game:
             elif len(self.enemies) < min(6, targets[self.wave] - self.killed_in_wave):
                 self.spawn_wave_enemies()
 
-        # Enemy shooting
+        #Enemy shooting
         for enemy in list(self.enemies):
             if now - enemy.last_shot > enemy.shoot_delay:
                 if enemy.is_boss:
@@ -656,7 +653,7 @@ class Game:
                     self.all_sprites.add(eb)
                 enemy.last_shot = now
 
-        # Boss lasers
+        #Boss lasers
         self.flash_alpha = max(0, self.flash_alpha - 18)
         for laser in self.boss_lasers[:]:
             was_warning = laser.in_warning
@@ -672,7 +669,7 @@ class Game:
             if not laser.alive:
                 self.boss_lasers.remove(laser)
 
-        # Player bullets hit enemies
+        #Player bullets hit enemies
         def _handle_enemy_kill(enemy):
             self.explosions.append(Explosion(
                 enemy.rect.centerx, enemy.rect.centery,
@@ -733,7 +730,7 @@ class Game:
 
         self.update_network_snapshot()
 
-    # ── Main loop ─────────────────────────────────────────────────────
+    #Main loop
     def run(self):
         while True:
             for event in pygame.event.get():

@@ -3,7 +3,6 @@ import math
 import pygame
 from .constants import S_WIDTH, S_HEIGHT, PARTICLE_SCALE
 
-
 class Explosion:
     def __init__(self, x, y, color, amount=28, power=4, shockwave=True):
         amount = max(6, int(amount * PARTICLE_SCALE))
@@ -81,7 +80,6 @@ class Explosion:
             if s[2] > 0:
                 end = (int(s[0][0] - s[1][0] * 2.2), int(s[0][1] - s[1][1] * 2.2))
                 pygame.draw.line(surface, (255, 230, 120), (int(s[0][0]), int(s[0][1])), end, 2)
-
 
 class BackgroundParticle(pygame.sprite.Sprite):
     def __init__(self):

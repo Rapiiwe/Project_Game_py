@@ -32,23 +32,23 @@ class PowerUp(pygame.sprite.Sprite):
         self.image.fill((0, 0, 0, 0))
         center = self.size // 2
         
-        # Outer glow
+        #Outer glow
         glow_radius = 18 + int(4 * math.sin(pulse))
         pygame.draw.circle(self.image, self.color_glow, (center, center), glow_radius)
         
-        # Base ring
+        #Base ring
         pygame.draw.circle(self.image, self.color_base, (center, center), 15)
         pygame.draw.circle(self.image, (255, 255, 255), (center, center), 15, 2)
         pygame.draw.circle(self.image, (255, 255, 255), (center, center), 11, 1)
         
-        # Inner icon
+        #Inner icon
         if self.type == 'health':
             pygame.draw.rect(self.image, self.color_icon, (center - 3, center - 8, 6, 16))
             pygame.draw.rect(self.image, self.color_icon, (center - 8, center - 3, 16, 6))
         elif self.type == 'speed':
             pts = [(center + 1, center - 8), (center + 6, center - 8), (center + 1, center), 
-                   (center + 5, center), (center - 3, center + 9), (center, center + 1),
-                   (center - 5, center + 1)]
+                (center + 5, center), (center - 3, center + 9), (center, center + 1),
+                (center - 5, center + 1)]
             pygame.draw.polygon(self.image, self.color_icon, pts)
         elif self.type == 'laser':
             pygame.draw.rect(self.image, self.color_icon, (center - 2, center - 7, 4, 14))

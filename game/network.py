@@ -4,7 +4,7 @@ import threading
 
 from .constants import HOST, PORT
 
-# Shared state (module-level, mutated by both game loop and network threads)
+#Shared state
 is_host = False
 online_mode = False
 online_connected = False
@@ -31,7 +31,6 @@ enemy_network_data: dict = {
     "name": "PILOT 2"
 }
 
-
 def reset_network():
     """Call before starting a new game session."""
     global is_host, online_mode, online_connected, network_status
@@ -46,7 +45,6 @@ def reset_network():
                         "ship_index": 0, "bullets": [], "game_state": {}, "name": "PILOT"})
     enemy_network_data.update({"x": 0, "y": 0, "health": 100, "max_health": 100,
                                 "ship_index": 0, "bullets": [], "game_state": {}, "name": "PILOT 2"})
-
 
 def host_server():
     global conn, online_mode, online_connected, network_status
@@ -145,10 +143,8 @@ def connect_to_server(ip):
     online_connected = False
     network_status = "Koneksi host terputus"
 
-
 def start_host_thread():
     threading.Thread(target=host_server, daemon=True).start()
-
 
 def start_join_thread(ip):
     threading.Thread(target=connect_to_server, args=(ip,), daemon=True).start()

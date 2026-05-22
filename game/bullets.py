@@ -4,18 +4,15 @@ from .constants import S_WIDTH, S_HEIGHT
 
 _next_bullet_id = 1
 
-
 def reset_bullet_id():
     global _next_bullet_id
     _next_bullet_id = 1
-
 
 def _next_id():
     global _next_bullet_id
     val = _next_bullet_id
     _next_bullet_id += 1
     return val
-
 
 class Bullet(pygame.sprite.Sprite):
     def __init__(self, x, y, color=(0, 255, 255), speed=-15, damage=10, width=6, height=18, dx=0):
@@ -63,7 +60,6 @@ class NetworkBullet(pygame.sprite.Sprite):
             pygame.draw.rect(self.image, color,             [5, 2, 7, 20], border_radius=3)
         self.rect.centerx = data.get("x", self.rect.centerx)
         self.rect.centery = data.get("y", self.rect.centery)
-
 
 class LaserBullet(pygame.sprite.Sprite):
     def __init__(self, x, y, damage=15, dx=0):
@@ -122,7 +118,7 @@ class BossLaser:
                 self.x       = self.boss.rect.centerx + self.x_offset
                 self.target_x = self.x
 
-    # ── state properties ──────────────────────────────────────────────
+    #state properties
     @property
     def in_warning(self):
         return self.timer > self.active_time + self.fade_time
@@ -159,12 +155,10 @@ class BossLaser:
             t = (py - self.start_y) / max(1, S_HEIGHT - self.start_y)
             beam_x = self.x + t * (self.target_x - self.x)
             
-            # Beam width at player's y height (glow_top_w is 88, glow_bot_w is 88 * 1.8)
             glow_top_w = self.width
             glow_bot_w = self.width * 1.8
             beam_w = glow_top_w + t * (glow_bot_w - glow_top_w)
             
-            # Forgiving collision: using 60% of glow beam width for actual hit box
             return abs(px - beam_x) < (beam_w * 0.3 + player.rect.width * 0.5)
         else:
             return self.get_rect().colliderect(player.rect)
@@ -172,7 +166,7 @@ class BossLaser:
     def can_damage(self):
         return self.active and self.damage_tick % 6 == 0
 
-    # ── drawing ──────────────────────────────────────────────────────
+    #drawing
     def draw_warning(self, surface):
         ticks    = pygame.time.get_ticks()
         progress = 1 - ((self.timer - (self.active_time + self.fade_time)) / self.warning_time)
@@ -180,15 +174,15 @@ class BossLaser:
         alpha    = int(90 + 115 * pulse)
 
         if self.spotlight:
-            # Draw angled warning line
+            #Draw angled warning line
             pygame.draw.line(surface, (255, 30, 70, alpha // 2), (self.x, self.start_y), (self.target_x, S_HEIGHT), 14)
             pygame.draw.line(surface, (255, 240, 240, alpha), (self.x, self.start_y), (self.target_x, S_HEIGHT), 2)
             
-            # Draw source ring
+            #Draw source ring
             pygame.draw.circle(surface, (255, 55, 140, 125), (int(self.x), int(self.start_y)), 20, 3)
             pygame.draw.circle(surface, (180, 50, 255, 120), (int(self.x), int(self.start_y)), 10)
             
-            # Draw impact circle on the bottom ground
+            #Draw impact circle on the bottom ground
             pygame.draw.circle(surface, (255, 70, 90, alpha), (int(self.target_x), S_HEIGHT - 24), 25, 3)
             pygame.draw.circle(surface, (255, 220, 220, alpha), (int(self.target_x), S_HEIGHT - 24), 10, 2)
         else:

@@ -15,7 +15,6 @@ _SOUND_FILES = {
     "laser": "sfx_laser.wav",
 }
 
-
 class SoundManager:
     def __init__(self):
         self.sound_on = True
@@ -30,7 +29,7 @@ class SoundManager:
         for key, filename in _SOUND_FILES.items():
             path = os.path.join(sounds_dir, filename)
             if not os.path.exists(path):
-                path = os.path.join(BASE_DIR, filename)  # fallback
+                path = os.path.join(BASE_DIR, filename)
             try:
                 self.sounds[key] = pygame.mixer.Sound(path)
             except Exception:
